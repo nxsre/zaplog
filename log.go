@@ -3,6 +3,7 @@ package zaplog
 import (
 	"errors"
 	"fmt"
+	"github.com/jinzhu/copier"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"sort"
@@ -16,8 +17,8 @@ import (
 //
 // Values configured here are per-second. See zapcore.NewSampler for details.
 type SamplingConfig struct {
-	Initial    int `json:"initial" yaml:"initial"`
-	Thereafter int `json:"thereafter" yaml:"thereafter"`
+	Initial    int `json:"initial" yaml:"initial" toml:"initial" mapstructure:"initial"`
+	Thereafter int `json:"thereafter" yaml:"thereafter" toml:"thereafter" mapstructure:"thereafter"`
 }
 
 // Config offers a declarative way to construct a logger. It doesn't do
@@ -37,44 +38,68 @@ type Config struct {
 	// Level is the minimum enabled logging level. Note that this is a dynamic
 	// level, so calling Config.Level.SetLevel will atomically change the log
 	// level of all loggers descended from this config.
-	Level zap.AtomicLevel `json:"level" yaml:"level"`
+	Level zap.AtomicLevel `json:"level" yaml:"level" toml:"level" mapstructure:"level"`
 	// Development puts the logger in development mode, which changes the
 	// behavior of DPanicLevel and takes stacktraces more liberally.
-	Development bool `json:"development" yaml:"development"`
+	Development bool `json:"development" yaml:"development" toml:"development" mapstructure:"development"`
 	// DisableCaller stops annotating logs with the calling function's file
 	// name and line number. By default, all logs are annotated.
-	DisableCaller bool `json:"disableCaller" yaml:"disableCaller"`
+	DisableCaller bool `json:"disableCaller" yaml:"disableCaller" toml:"disableCaller" mapstructure:"disableCaller"`
 	// DisableStacktrace completely disables automatic stacktrace capturing. By
 	// default, stacktraces are captured for WarnLevel and above logs in
 	// development and ErrorLevel and above in production.
-	DisableStacktrace bool `json:"disableStacktrace" yaml:"disableStacktrace"`
+	DisableStacktrace bool `json:"disableStacktrace" yaml:"disableStacktrace" toml:"disableStacktrace" mapstructure:"disableStacktrace"`
 	// Sampling sets a sampling policy. A nil SamplingConfig disables sampling.
-	Sampling *SamplingConfig `json:"sampling" yaml:"sampling"`
+	Sampling *SamplingConfig `json:"sampling" yaml:"sampling" toml:"sampling" mapstructure:"sampling"`
 	// Encoding sets the logger's encoding. Valid values are "json" and
 	// "console", as well as any third-party encodings registered via
 	// RegisterEncoder.
-	Encoding string `json:"encoding" yaml:"encoding"`
+	Encoding string `json:"encoding" yaml:"encoding" toml:"encoding" mapstructure:"encoding"`
 	// EncoderConfig sets options for the chosen encoder. See
 	// zapcore.EncoderConfig for details.
-	EncoderConfig zapcore.EncoderConfig `json:"encoderConfig" yaml:"encoderConfig"`
+	EncoderConfig EncoderConfig `json:"encoderConfig" yaml:"encoderConfig" toml:"encoderConfig" mapstructure:"encoderConfig"`
 	// OutputPaths is a list of URLs or file paths to write logging output to.
 	// See Open for details.
-	OutputPaths []string `json:"outputPaths" yaml:"outputPaths"`
+	OutputPaths []string `json:"outputPaths" yaml:"outputPaths" toml:"outputPaths" mapstructure:"outputPaths"`
 	// ErrorOutputPaths is a list of URLs to write internal logger errors to.
 	// The default is standard error.
 	//
 	// Note that this setting only affects internal errors; for sample code that
 	// sends error-level logs to a different location from info- and debug-level
 	// logs, see the package-level AdvancedConfiguration example.
-	ErrorOutputPaths []string `json:"errorOutputPaths" yaml:"errorOutputPaths"`
+	ErrorOutputPaths []string `json:"errorOutputPaths" yaml:"errorOutputPaths" toml:"errorOutputPaths" mapstructure:"errorOutputPaths"`
 	// InitialFields is a collection of fields to add to the root logger.
-	InitialFields map[string]interface{} `json:"initialFields" yaml:"initialFields"`
+	InitialFields map[string]interface{} `json:"initialFields" yaml:"initialFields" toml:"initialFields" mapstructure:"initialFields"`
+}
+
+// An EncoderConfig allows users to configure the concrete encoders supplied by
+// zapcore.
+type EncoderConfig struct {
+	// Set the keys used for each log entry. If any key is empty, that portion
+	// of the entry is omitted.
+	MessageKey    string `json:"messageKey" yaml:"messageKey" toml:"messageKey" mapstructure:"messageKey"`
+	LevelKey      string `json:"levelKey" yaml:"levelKey" toml:"levelKey" mapstructure:"levelKey"`
+	TimeKey       string `json:"timeKey" yaml:"timeKey" toml:"timeKey" mapstructure:"timeKey"`
+	NameKey       string `json:"nameKey" yaml:"nameKey" toml:"nameKey" mapstructure:"nameKey"`
+	CallerKey     string `json:"callerKey" yaml:"callerKey" toml:"callerKey" mapstructure:"callerKey"`
+	StacktraceKey string `json:"stacktraceKey" yaml:"stacktraceKey" toml:"stacktraceKey" mapstructure:"stacktraceKey"`
+	LineEnding    string `json:"lineEnding" yaml:"lineEnding" toml:"lineEnding" mapstructure:"lineEnding"`
+	// Configure the primitive representations of common complex types. For
+	// example, some users may want all time.Times serialized as floating-point
+	// seconds since epoch, while others may prefer ISO8601 strings.
+	EncodeLevel    zapcore.LevelEncoder    `json:"levelEncoder" yaml:"levelEncoder" toml:"levelEncoder" mapstructure:"levelEncoder"`
+	EncodeTime     zapcore.TimeEncoder     `json:"timeEncoder" yaml:"timeEncoder" toml:"timeEncoder" mapstructure:"timeEncoder"`
+	EncodeDuration zapcore.DurationEncoder `json:"durationEncoder" yaml:"durationEncoder" toml:"durationEncoder" mapstructure:"durationEncoder"`
+	EncodeCaller   zapcore.CallerEncoder   `json:"callerEncoder" yaml:"callerEncoder" toml:"callerEncoder" mapstructure:"callerEncoder"`
+	// Unlike the other primitive type encoders, EncodeName is optional. The
+	// zero value falls back to FullNameEncoder.
+	EncodeName zapcore.NameEncoder `json:"nameEncoder" yaml:"nameEncoder" toml:"nameEncoder" mapstructure:"nameEncoder"`
 }
 
 // NewProductionEncoderConfig returns an opinionated EncoderConfig for
 // production environments.
-func NewProductionEncoderConfig() zapcore.EncoderConfig {
-	return zapcore.EncoderConfig{
+func NewProductionEncoderConfig() EncoderConfig {
+	return EncoderConfig{
 		TimeKey:        "ts",
 		LevelKey:       "level",
 		NameKey:        "logger",
@@ -111,8 +136,8 @@ func NewProductionConfig() Config {
 
 // NewDevelopmentEncoderConfig returns an opinionated EncoderConfig for
 // development environments.
-func NewDevelopmentEncoderConfig() zapcore.EncoderConfig {
-	return zapcore.EncoderConfig{
+func NewDevelopmentEncoderConfig() EncoderConfig {
+	return EncoderConfig{
 		// Keys can be anything except the empty string.
 		TimeKey:        "T",
 		LevelKey:       "L",
@@ -165,12 +190,12 @@ func (cfg Config) Build(opts ...zap.Option) (*zap.Logger, error) {
 		return lvl < zapcore.ErrorLevel
 	})
 
-
-	core:=zapcore.NewTee(
+	core := zapcore.NewTee(
 		zapcore.NewCore(enc, errSink, highPriority),
 		//zapcore.NewCore(enc, sink, cfg.Level),
 		zapcore.NewCore(enc, sink, lowPriority),
 	)
+
 	log := zap.New(
 		core,
 		cfg.buildOptions(errSink)...,
@@ -207,6 +232,7 @@ func (cfg Config) buildOptions(errSink zapcore.WriteSyncer) []zap.Option {
 	}
 
 	if len(cfg.InitialFields) > 0 {
+		fmt.Println(cfg.InitialFields)
 		fs := make([]zap.Field, 0, len(cfg.InitialFields))
 		keys := make([]string, 0, len(cfg.InitialFields))
 		for k := range cfg.InitialFields {
@@ -242,18 +268,59 @@ func (cfg Config) buildEncoder() (zapcore.Encoder, error) {
 var (
 	errNoEncoderNameSpecified = errors.New("no encoder name specified")
 
-	_encoderNameToConstructor = map[string]func(zapcore.EncoderConfig) (zapcore.Encoder, error){
-		"console": func(encoderConfig zapcore.EncoderConfig) (zapcore.Encoder, error) {
-			return zapcore.NewConsoleEncoder(encoderConfig), nil
+	_encoderNameToConstructor = map[string]func(EncoderConfig) (zapcore.Encoder, error){
+
+		"console": func(encoderConfig EncoderConfig) (zapcore.Encoder, error) {
+			if encoderConfig.EncodeLevel == nil {
+				encoderConfig.EncodeLevel = zapcore.LowercaseColorLevelEncoder
+			}
+			if encoderConfig.EncodeCaller == nil {
+				encoderConfig.EncodeCaller = zapcore.FullCallerEncoder
+			}
+
+			if encoderConfig.EncodeDuration == nil {
+				encoderConfig.EncodeDuration = zapcore.SecondsDurationEncoder
+			}
+			if encoderConfig.EncodeName == nil {
+				encoderConfig.EncodeName = zapcore.FullNameEncoder
+			}
+
+			if encoderConfig.EncodeTime == nil {
+				encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+			}
+			encoderCfg := zapcore.EncoderConfig{}
+			copier.Copy(&encoderCfg, &encoderConfig)
+
+			return zapcore.NewConsoleEncoder(encoderCfg), nil
 		},
-		"json": func(encoderConfig zapcore.EncoderConfig) (zapcore.Encoder, error) {
-			return zapcore.NewJSONEncoder(encoderConfig), nil
+		"json": func(encoderConfig EncoderConfig) (zapcore.Encoder, error) {
+			if encoderConfig.EncodeLevel == nil {
+				encoderConfig.EncodeLevel = zapcore.LowercaseLevelEncoder
+			}
+			if encoderConfig.EncodeCaller == nil {
+				encoderConfig.EncodeCaller = zapcore.FullCallerEncoder
+			}
+
+			if encoderConfig.EncodeDuration == nil {
+				encoderConfig.EncodeDuration = zapcore.SecondsDurationEncoder
+			}
+			if encoderConfig.EncodeName == nil {
+				encoderConfig.EncodeName = zapcore.FullNameEncoder
+			}
+
+			if encoderConfig.EncodeTime == nil {
+				encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+			}
+			encoderCfg := zapcore.EncoderConfig{}
+			copier.Copy(&encoderCfg, &encoderConfig)
+
+			return zapcore.NewJSONEncoder(encoderCfg), nil
 		},
 	}
 	_encoderMutex sync.RWMutex
 )
 
-func newEncoder(name string, encoderConfig zapcore.EncoderConfig) (zapcore.Encoder, error) {
+func newEncoder(name string, encoderConfig EncoderConfig) (zapcore.Encoder, error) {
 	_encoderMutex.RLock()
 	defer _encoderMutex.RUnlock()
 	if name == "" {
@@ -272,7 +339,7 @@ func newEncoder(name string, encoderConfig zapcore.EncoderConfig) (zapcore.Encod
 //
 // Attempting to register an encoder whose name is already taken returns an
 // error.
-func RegisterEncoder(name string, constructor func(zapcore.EncoderConfig) (zapcore.Encoder, error)) error {
+func RegisterEncoder(name string, constructor func(EncoderConfig) (zapcore.Encoder, error)) error {
 	_encoderMutex.Lock()
 	defer _encoderMutex.Unlock()
 	if name == "" {
