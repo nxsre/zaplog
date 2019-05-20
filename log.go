@@ -38,7 +38,7 @@ type Config struct {
 	// Level is the minimum enabled logging level. Note that this is a dynamic
 	// level, so calling Config.Level.SetLevel will atomically change the log
 	// level of all loggers descended from this config.
-	Level zap.AtomicLevel `json:"level" yaml:"level" toml:"level" mapstructure:"level"`
+	Level string `json:"level" yaml:"level" toml:"level" mapstructure:"level"`
 	// Development puts the logger in development mode, which changes the
 	// behavior of DPanicLevel and takes stacktraces more liberally.
 	Development bool `json:"development" yaml:"development" toml:"development" mapstructure:"development"`
@@ -121,7 +121,7 @@ func NewProductionEncoderConfig() EncoderConfig {
 // Stacktraces are automatically included on logs of ErrorLevel and above.
 func NewProductionConfig() Config {
 	return Config{
-		Level:       zap.NewAtomicLevelAt(zap.InfoLevel),
+		Level:       "info",
 		Development: false,
 		Sampling: &SamplingConfig{
 			Initial:    100,
@@ -161,7 +161,7 @@ func NewDevelopmentEncoderConfig() EncoderConfig {
 // Stacktraces are automatically included on logs of WarnLevel and above.
 func NewDevelopmentConfig() Config {
 	return Config{
-		Level:            zap.NewAtomicLevelAt(zap.DebugLevel),
+		Level:            "debug",
 		Development:      true,
 		Encoding:         "console",
 		EncoderConfig:    NewDevelopmentEncoderConfig(),
@@ -182,12 +182,15 @@ func (cfg Config) Build(opts ...zap.Option) (*zap.Logger, error) {
 		return nil, err
 	}
 
+	cfgLvl := zap.AtomicLevel{}
+	cfgLvl.UnmarshalText([]byte(cfg.Level))
+
 	// Define our level-handling logic.
 	highPriority := zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
-		return lvl >= zapcore.ErrorLevel
+		return lvl >= cfgLvl.Level() && lvl >= zapcore.ErrorLevel
 	})
 	lowPriority := zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
-		return lvl < zapcore.ErrorLevel
+		return lvl >= cfgLvl.Level() && lvl < zapcore.ErrorLevel
 	})
 
 	core := zapcore.NewTee(
@@ -232,7 +235,6 @@ func (cfg Config) buildOptions(errSink zapcore.WriteSyncer) []zap.Option {
 	}
 
 	if len(cfg.InitialFields) > 0 {
-		fmt.Println(cfg.InitialFields)
 		fs := make([]zap.Field, 0, len(cfg.InitialFields))
 		keys := make([]string, 0, len(cfg.InitialFields))
 		for k := range cfg.InitialFields {
@@ -271,54 +273,41 @@ var (
 	_encoderNameToConstructor = map[string]func(EncoderConfig) (zapcore.Encoder, error){
 
 		"console": func(encoderConfig EncoderConfig) (zapcore.Encoder, error) {
-			if encoderConfig.EncodeLevel == nil {
-				encoderConfig.EncodeLevel = zapcore.LowercaseColorLevelEncoder
-			}
-			if encoderConfig.EncodeCaller == nil {
-				encoderConfig.EncodeCaller = zapcore.FullCallerEncoder
-			}
-
-			if encoderConfig.EncodeDuration == nil {
-				encoderConfig.EncodeDuration = zapcore.SecondsDurationEncoder
-			}
-			if encoderConfig.EncodeName == nil {
-				encoderConfig.EncodeName = zapcore.FullNameEncoder
-			}
-
-			if encoderConfig.EncodeTime == nil {
-				encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-			}
-			encoderCfg := zapcore.EncoderConfig{}
-			copier.Copy(&encoderCfg, &encoderConfig)
-
-			return zapcore.NewConsoleEncoder(encoderCfg), nil
+			cfg := newDefEncoderConfig(encoderConfig)
+			return zapcore.NewConsoleEncoder(cfg), nil
 		},
 		"json": func(encoderConfig EncoderConfig) (zapcore.Encoder, error) {
-			if encoderConfig.EncodeLevel == nil {
-				encoderConfig.EncodeLevel = zapcore.LowercaseLevelEncoder
-			}
-			if encoderConfig.EncodeCaller == nil {
-				encoderConfig.EncodeCaller = zapcore.FullCallerEncoder
-			}
-
-			if encoderConfig.EncodeDuration == nil {
-				encoderConfig.EncodeDuration = zapcore.SecondsDurationEncoder
-			}
-			if encoderConfig.EncodeName == nil {
-				encoderConfig.EncodeName = zapcore.FullNameEncoder
-			}
-
-			if encoderConfig.EncodeTime == nil {
-				encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-			}
-			encoderCfg := zapcore.EncoderConfig{}
-			copier.Copy(&encoderCfg, &encoderConfig)
-
-			return zapcore.NewJSONEncoder(encoderCfg), nil
+			cfg := newDefEncoderConfig(encoderConfig)
+			return zapcore.NewJSONEncoder(cfg), nil
 		},
 	}
 	_encoderMutex sync.RWMutex
 )
+
+func newDefEncoderConfig(encoderConfig EncoderConfig) zapcore.EncoderConfig {
+	if encoderConfig.EncodeLevel == nil {
+		encoderConfig.EncodeLevel = zapcore.LowercaseLevelEncoder
+	}
+
+	if encoderConfig.EncodeCaller == nil {
+		encoderConfig.EncodeCaller = zapcore.FullCallerEncoder
+	}
+
+	if encoderConfig.EncodeDuration == nil {
+		encoderConfig.EncodeDuration = zapcore.SecondsDurationEncoder
+	}
+	if encoderConfig.EncodeName == nil {
+		encoderConfig.EncodeName = zapcore.FullNameEncoder
+	}
+
+	if encoderConfig.EncodeTime == nil {
+		encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	}
+
+	encoderCfg := zapcore.EncoderConfig{}
+	copier.Copy(&encoderCfg, &encoderConfig)
+	return encoderCfg
+}
 
 func newEncoder(name string, encoderConfig EncoderConfig) (zapcore.Encoder, error) {
 	_encoderMutex.RLock()
